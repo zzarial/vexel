@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+AGENTS.md 
+Claude.md 
+notes.txt
+.gitignore_hidden_message
