@@ -1,3 +1,5 @@
+pub mod render;
+
 pub struct AppState {
     pub elements: Vec<Element>,
     pub cursor: usize, 
@@ -12,7 +14,6 @@ impl AppState {
             kind: ElementKind::Box,
             data: ElementData::BoxData,
             style: None,
-            add_style: None,
             childrens: Vec::new(),
             parent: 0,
             code: None,
@@ -65,12 +66,31 @@ pub struct Element {
     pub kind: ElementKind,
     pub data: ElementData,
     pub style: Option<Style>,
-    pub add_style: Option<AdditionalStyle>,
     pub childrens: Vec<usize>,
     pub parent: usize,
     pub code: Option<ElementCode>,
     pub dirty: bool,
     pub focusable: bool,
+}
+
+impl Element {
+    // у элемента без стиля — координаты (0, 0), как у Default
+    // отрицательные x/y обрезаются до 0: за левым краем терминала не рисуем
+    pub fn style_x(&self) -> u16 {
+        self.style.as_ref().map_or(0, |s| s.x.max(0) as u16)
+    }
+    pub fn style_y(&self) -> u16 {
+        self.style.as_ref().map_or(0, |s| s.y.max(0) as u16)
+    }
+    pub fn style_width(&self) -> u16 {
+        self.style.as_ref().map_or(0, |s| s.width)
+    }
+    pub fn style_height(&self) -> u16 {
+        self.style.as_ref().map_or(0, |s| s.height)
+    }
+    pub fn style_position(&self) -> Position {
+        self.style.as_ref().map_or(Position::Relative, |s| s.position)
+    }
 }
 
 pub struct ElementCode {
@@ -110,16 +130,13 @@ pub struct Style {
     pub y: i16,
     pub width: u16,
     pub height: u16,
+    pub position: Position,
     pub color: Color,
     pub background: Option<Color>,
     pub border: Option<Border>,
     pub padding: usize,//внутреннй отсуп
     pub margin: usize,//внешний отсуп 
     pub visible: bool,
-}
-
-pub struct AdditionalStyle {
-    //
 }
 
 impl Default for Style {
@@ -129,6 +146,7 @@ impl Default for Style {
             y: 0,
             width: 0,//обязательное поле
             height: 0,//обязательное поле
+            position: Position::Relative,
             color: Color::Named("White".to_string()),
             background: None,
             border: None,
@@ -149,4 +167,9 @@ pub enum Color {
     Named(String),
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum Position {
+    Relative,
+    Absolute,
+}
 
