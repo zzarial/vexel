@@ -13,8 +13,8 @@ impl AppState {
             index: 0,
             kind: ElementKind::Box,
             data: ElementData::BoxData,
-            style: None,
-            childrens: Vec::new(),
+            style: Style::default(),
+            children: Vec::new(),
             parent: 0,
             code: None,
             dirty: false,
@@ -34,7 +34,7 @@ impl AppState {
         element.dirty = true;
         element.index = idx;
         self.elements.push(element);
-        self.elements[self.cursor].childrens.push(idx);
+        self.elements[self.cursor].children.push(idx);
         self.prev = self.cursor;
         self.cursor = idx;
     }
@@ -49,9 +49,9 @@ impl AppState {
         self.cursor = self.elements[self.cursor].parent;
     }
     pub fn cursor_down(&mut self) {
-        if self.elements[self.cursor].childrens.is_empty() { return }
+        if self.elements[self.cursor].children.is_empty() { return }
         self.prev = self.cursor;
-        self.cursor = self.elements[self.cursor].childrens[0];
+        self.cursor = self.elements[self.cursor].children[0];
     } 
     pub fn back_cursor(&mut self) {
         let a = self.cursor;
@@ -65,8 +65,8 @@ pub struct Element {
     pub index: usize,
     pub kind: ElementKind,
     pub data: ElementData,
-    pub style: Option<Style>,
-    pub childrens: Vec<usize>,
+    pub style: Style,
+    pub children: Vec<usize>,
     pub parent: usize,
     pub code: Option<ElementCode>,
     pub dirty: bool,
@@ -74,22 +74,20 @@ pub struct Element {
 }
 
 impl Element {
-    // у элемента без стиля — координаты (0, 0), как у Default
-    // отрицательные x/y обрезаются до 0: за левым краем терминала не рисуем
     pub fn style_x(&self) -> u16 {
-        self.style.as_ref().map_or(0, |s| s.x.max(0) as u16)
+        self.style.x.max(0) as u16
     }
     pub fn style_y(&self) -> u16 {
-        self.style.as_ref().map_or(0, |s| s.y.max(0) as u16)
+        self.style.y.max(0) as u16
     }
     pub fn style_width(&self) -> u16 {
-        self.style.as_ref().map_or(0, |s| s.width)
+        self.style.width
     }
     pub fn style_height(&self) -> u16 {
-        self.style.as_ref().map_or(0, |s| s.height)
+        self.style.height
     }
     pub fn style_position(&self) -> Position {
-        self.style.as_ref().map_or(Position::Relative, |s| s.position)
+        self.style.position
     }
 }
 
@@ -144,8 +142,8 @@ impl Default for Style {
         Self {
             x: 0,
             y: 0,
-            width: 0,//обязательное поле
-            height: 0,//обязательное поле
+            width: 0,
+            height: 0,
             position: Position::Relative,
             color: Color::Named("White".to_string()),
             background: None,
