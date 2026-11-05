@@ -11,7 +11,6 @@ impl AppState {
         let root = Element {
             id: "root".to_string(),
             index: 0,
-            kind: ElementKind::Box,
             data: ElementData::BoxData,
             style: Style::default(),
             children: Vec::new(),
@@ -63,7 +62,6 @@ impl AppState {
 pub struct Element {
     pub id: String,
     pub index: usize,
-    pub kind: ElementKind,
     pub data: ElementData,
     pub style: Style,
     pub children: Vec<usize>,
@@ -103,13 +101,6 @@ pub enum Event {
     Enter,
     Tab,
     Escape,
-}
-
-pub enum ElementKind {
-    Box,
-    Text,
-    Button,
-    Input,
 }
 
 pub enum ElementData {
