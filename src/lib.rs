@@ -72,6 +72,36 @@ pub struct Element {
 }
 
 impl Element {
+    fn new(id: &str, data: ElementData, style: Style) -> Self {//custom
+        Self {
+            id: id.to_string(),
+            index: 0,
+            data,
+            style,
+            children: Vec::new(),
+            parent: 0,
+            code: None,
+            dirty: false,
+            focusable: false,
+        }
+    }
+  
+    pub fn text(id: &str, text: &str, style: Style) -> Self {
+        Self::new(id, ElementData::TextData(text.to_string()), style)
+    }
+    pub fn container(id: &str, style: Style) -> Self {
+        Self::new(id, ElementData::BoxData, style)
+    }
+    pub fn button(id: &str, label: &str, style: Style) -> Self {
+        Self::new(id, ElementData::ButtonData { label: label.to_string() }, style)
+    }
+    pub fn input(id: &str, placeholder: &str, style: Style) -> Self {
+        Self::new(id, ElementData::InputData {
+            placeholder: placeholder.to_string(),
+            value: String::new(),
+            focused: false,
+        }, style)
+    }
     pub fn style_x(&self) -> u16 {
         self.style.x.max(0) as u16
     }
