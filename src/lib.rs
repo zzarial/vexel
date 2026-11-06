@@ -166,7 +166,7 @@ impl Default for Style {
             width: 0,
             height: 0,
             position: Position::Relative,
-            color: Color::Named("White".to_string()),
+            color: Color::WHITE,
             background: None,
             border: None,
             padding: 0,
@@ -181,9 +181,41 @@ pub struct Border {
     pub color: Color,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub struct Rgb {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum NamedColor {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    BrightBlack,
+    BrightRed,
+    BrightGreen,
+    BrightYellow,
+    BrightBlue,
+    BrightMagenta,
+    BrightCyan,
+    BrightWhite,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 pub enum Color {
-    Rgb(u8, u8, u8),
-    Named(String),
+    Rgb(Rgb),
+    Named(NamedColor),
+}
+
+impl Color {
+    pub const WHITE: Color = Color::Named(NamedColor::White);
 }
 
 #[derive(Clone, Copy, PartialEq)]
