@@ -69,7 +69,7 @@ impl Renderer {
     }
 
     pub fn render(&mut self, app: &AppState) -> io::Result<()> {
-        enable_raw_more()?;
+        enable_raw_mode()?;
         let mut stdout = io::stdout();
 
         let (w, h) = terminal::size()?;
@@ -139,10 +139,16 @@ fn draw_box(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
         buf.set(x + i, y, cell(el, '─'));
         buf.set(x + i, y + height - 1, cell(el, '─'));
     }
-    for row in 0..height {
-        buf.set(x, y + row, cell(el, if row == 0 { '┌' } else if row == height - 1 { '└' } else { '│' }));
-        buf.set(x + width - 1, y + row, cell(el, if row == 0 { '┐' } else if row == height - 1 { '┘' } else { '│' }));
+    //вертикальные стороны без углов (0 и height-1)  их ставит горизонтальный проход
+    for row in 1..height - 1 {
+        buf.set(x, y + row, cell(el, '│'));
+        buf.set(x + width - 1, y + row, cell(el, '│'));
     }
+    //углы  один раз, последними 
+    buf.set(x, y, cell(el, '┌'));
+    buf.set(x + width - 1, y, cell(el, '┐'));
+    buf.set(x, y + height - 1, cell(el, '└'));
+    buf.set(x + width - 1, y + height - 1, cell(el, '┘'));
 }
 
 fn cell(el: &Element, ch: char) -> Cell {
