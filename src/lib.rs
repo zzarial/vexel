@@ -2,7 +2,8 @@ pub mod render;
 
 pub struct AppState {
     pub elements: Vec<Element>,
-    pub cursor: usize, 
+    pub cursor: usize,
+    pub focused: usize,
     pub prev: usize,
 }
 
@@ -17,12 +18,12 @@ impl AppState {
             parent: 0,
             code: None,
             dirty: false,
-            focusable: false,
         };
         let root_index = root.index;
         Self {   
             elements: vec![root],
             cursor: root_index,
+            focused: root_index,
             prev: root_index,
         }
     }
@@ -68,7 +69,6 @@ pub struct Element {
     pub parent: usize,
     pub code: Option<ElementCode>,
     pub dirty: bool,
-    pub focusable: bool,
 }
 
 impl Element {
@@ -82,7 +82,6 @@ impl Element {
             parent: 0,
             code: None,
             dirty: false,
-            focusable: false,
         }
     }
   
@@ -99,7 +98,6 @@ impl Element {
         Self::new(id, ElementData::InputData {
             placeholder: placeholder.to_string(),
             value: String::new(),
-            focused: false,
         }, style)
     }
     pub fn style_x(&self) -> u16 {
@@ -140,7 +138,6 @@ pub enum ElementData {
     InputData {
         placeholder: String,
         value: String,
-        focused: bool,
     },
 }
 

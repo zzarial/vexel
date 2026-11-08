@@ -8,8 +8,6 @@ use crossterm::{
     ExecutableCommand, QueueableCommand,
 };
 
-// Ячейка экрана: что должно быть нарисовано в точке (x, y).
-// Рендер больше не пишет в stdout — он заполняет буфер ячеек.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Cell {//символ
     pub ch: char,
@@ -46,26 +44,37 @@ impl Buffer {
 }
 
 // разница между кадрами: только изменившиеся ячейки
-pub fn diff(front: &Buffer, back: &Buffer) -> Vec<(u16, u16, Cell)> {//сравнение фронт и бек буффреа
+pub fn diff(old: &Buffer, new: &Buffer) -> Vec<(u16, u16, Cell)> {//сравнение прошлого и текущего кадров
     let mut out = Vec::new();
-    for i in 0..front.cells.len() {
-        if back.cells[i] != front.cells[i] {
-            let x = (i % front.width as usize) as u16;
-            let y = (i / front.width as usize) as u16;
-            out.push((x, y, front.cells[i]));
+    for i in 0..new.cells.len() {
+        if old.cells[i] != new.cells[i] {
+            let x = (i % new.width as usize) as u16;
+            let y = (i / new.width as usize) as u16;
+            out.push((x, y, new.cells[i]));
         }
     }
     out
 }
 
+//позиция вектора != индекс элемента
+#[derive(Clone, Copy)]
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    pub index: usize,
+}
+
 // владеет бек буфером между кадрами
 pub struct Renderer {
     back: Buffer,
+    rects: Vec<Rect>,
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        Self { back: Buffer::new(0, 0) }
+        Self { back: Buffer::new(0, 0), rects: Vec::new() }
     }
 
     pub fn render(&mut self, app: &AppState) -> io::Result<()> {
@@ -81,8 +90,9 @@ impl Renderer {
 
         //1 заполняем фронт буфер (без stdout)
         let mut front = Buffer::new(w, h);
+        self.rects.clear(); // каждый кадр заново: дерево могло измениться
         let root = &app.elements[0];
-        draw_element(&mut front, app, root, 0, 0);
+        draw_element(&mut front, &mut self.rects, app, root, 0, 0);
 
         //2 сравнение буферов, в stdout уезжает только разница
         stdout.execute(Hide)?;
@@ -100,13 +110,37 @@ impl Renderer {
         self.back = front;
         Ok(())
     }
+    pub fn hit_test(&self, x: u16, y: u16) -> Option<usize> {
+        for i in (0..self.rects.len()).rev() {
+            let r = &self.rects[i];
+            //u32, x+w может переполнить u16
+            let (x, y) = (x as u32, y as u32);
+            if x >= r.x as u32 && x < r.x as u32 + r.w as u32 && y >= r.y as u32 && y < r.y as u32 + r.h as u32 {
+                return Some(r.index);
+            }
+        }
+        None
+    }
 }
 
-fn draw_element(buf: &mut Buffer, app: &AppState, el: &Element, parent_x: u16, parent_y: u16) {
+fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &Element, parent_x: u16, parent_y: u16) {
     let (x, y) = if el.style_position() == Position::Relative {
         (parent_x + el.style_x(), parent_y + el.style_y())
     } else {
         (el.style_x(), el.style_y())
+    };
+
+    // кэш координат элементов (rect)
+    let idx = el.index as usize;
+    if idx >= rects.len() {
+        rects.resize(idx + 1, Rect { x: 0, y: 0, w: 0, h: 0, index: 0 });
+    }
+    rects[idx] = Rect {
+        x,
+        y,
+        w: el.style_width(),
+        h: el.style_height(),
+        index: el.index,
     };
 
     // невидимый сам не рисуется, но дети да
@@ -118,12 +152,45 @@ fn draw_element(buf: &mut Buffer, app: &AppState, el: &Element, parent_x: u16, p
                 }
             }
             ElementData::BoxData => draw_box(buf, el, x, y),
-            _ => { /* Button/Input заглушка */ }
+            ElementData::ButtonData { label } => draw_button(buf, el, x, y, label),
+            ElementData::InputData { .. } => draw_input(buf, el, x, y),
         }
     }
 
     for &child_idx in &el.children {
-        draw_element(buf, app, &app.elements[child_idx], x, y);
+        draw_element(buf, rects, app, &app.elements[child_idx], x, y);
+    }
+}
+
+fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, label: &str) {
+    draw_box(buf, el, x, y);
+
+    let (width, height) = (el.style_width(), el.style_height());
+    if width == 0 || height == 0 { return; }
+
+    // label(текст) по центру: смещение = (ширина - длина текста) / 2
+    let len = label.chars().count() as u16;
+    let tx = x + (width.saturating_sub(len)) / 2;
+    let ty = y + height / 2;
+    for (i, ch) in label.chars().enumerate() {
+        buf.set(tx + i as u16, ty, Cell { ch, fg: el.style.color, bg: el.style.background });
+    }
+}
+
+fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
+    draw_box(buf, el, x, y);
+
+    let (width, height) = (el.style_width(), el.style_height());
+    if width < 3 || height == 0 { return; }
+
+    if let ElementData::InputData { placeholder, value } = &el.data {
+        // value непустой ? показываем value : показываем placeholder
+        // dim: placeholder рисуется приглушённым серым, чтобы отличать от введённого
+        let (text, dim) = if value.is_empty() { (placeholder, true) } else { (value, false) };
+        let fg = if dim { Color::Named(NamedColor::BrightBlack) } else { el.style.color };
+        for (i, ch) in text.chars().take((width - 2) as usize).enumerate() {
+            buf.set(x + 1 + i as u16, y + height / 2, Cell { ch, fg, bg: el.style.background });
+        }
     }
 }
 
@@ -144,7 +211,7 @@ fn draw_box(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
         buf.set(x, y + row, cell(el, '│'));
         buf.set(x + width - 1, y + row, cell(el, '│'));
     }
-    //углы  один раз, последними 
+    //углы один раз, последними
     buf.set(x, y, cell(el, '┌'));
     buf.set(x + width - 1, y, cell(el, '┐'));
     buf.set(x, y + height - 1, cell(el, '└'));
