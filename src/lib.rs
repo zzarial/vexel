@@ -39,6 +39,10 @@ impl AppState {
         self.prev = self.cursor;
         self.cursor = idx;
     }
+    pub fn delete_element(&mut self, index: usize) {
+        let el = &mut self.elements[index];
+        el.style.visible = false;
+    }
     pub fn update_element(&mut self, element: Element) { 
         let idx = element.index;
         self.cursor = idx;
