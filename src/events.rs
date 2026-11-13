@@ -7,12 +7,13 @@ use crate::{AppState, Event};
 pub fn poll_event(timeout: Duration) -> bool {
     event::poll(timeout).unwrap_or(false)
 }
-
+//переводит crossterm event type в lib/Event 
 pub fn read_event() -> Option<Event> {
     match event::read().ok()? {
         // --- клавиатура ---
         CTEvent::Key(key) => match key.code {
             KeyCode::Char(c) => Some(Event::Key(c)),
+            //TODO остальные символы
             KeyCode::Enter => Some(Event::Enter),
             KeyCode::Tab => Some(Event::Tab),
             KeyCode::Esc => Some(Event::Escape),
@@ -49,21 +50,32 @@ pub fn dispatch(event: Event, app: &mut AppState, r: &crate::render::Renderer) {
 
 //вызов кулбеков
 fn call_on_key(app: &mut AppState, target: usize, event: Event) {
-    let cb = app.elements[target]
-        .code
-        .as_mut()                    // Option<ElementCode> -> Option<&mut ElementCode>
-        .and_then(|c| c.on_key.as_mut()); // есть ли on_key?
+    let mut cb: Option<Box<dyn Fn(Event, &mut AppState)>> = None;// есть ли code и on_key?
+    if let Some(code) = app.elements[target].code.as_mut() {//  колбэк лежит внтури app, а вызывать его надо С app.
+        cb = code.on_key.take(); //  держать ссылку и мутировать нельзя. take на время. 
+    }
+
     if let Some(cb) = cb {
-        // нельзя: cb(event, app) пока app занят borrow'ом выше
-        // решение: забрать колбэк на время (mem::take), вернуть после
-        let taken = std::mem::take(cb);
-        taken(event, app);
-        // вернуть обратно не выйдет: FnOnce потребил колбэк.
-        // поэтому у on_key должен быть другой путь - см. вопросы ниже
+        cb(event, app);
+        // вернуть колбэк обратно
+        if let Some(code) = app.elements[target].code.as_mut() {
+            code.on_key = Some(cb);
+        }
     }
 }
 
 fn call_on_click(app: &mut AppState, target: usize, event: Event) {
-    //TODO 
-    let _ = (target, event);
+    let mut cb: Option<Box<dyn Fn(Event, &mut AppState)>> = None;
+
+    if let Some(code) = app.elements[target].code.as_mut() {
+        cb = code.on_click.take();
+    }
+
+    if let Some(cb) = cb {
+        cb(event, app);
+
+        if let Some(code) = app.elements[target].code.as_mut() {
+            code.on_click = Some(cb);
+        }
+    }
 }
