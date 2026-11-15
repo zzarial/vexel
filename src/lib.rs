@@ -39,6 +39,17 @@ impl AppState {
         self.prev = self.cursor;
         self.cursor = idx;
     }
+    pub fn push_sibling(&mut self, mut element: Element) {
+        let idx = self.elements.len();
+        element.dirty = true;
+        element.index = idx;
+        self.elements.push(element);
+        let copy = self.cursor;
+        self.cursor_up();
+        self.elements[self.cursor].children.push(idx);
+        self.prev = copy;
+        self.cursor = idx;
+    }
     pub fn delete_element(&mut self, index: usize) {
         let el = &mut self.elements[index];
         el.style.visible = false;
@@ -134,6 +145,7 @@ pub enum Event {
     Enter,
     Tab,
     Escape,
+    Backspace,
 }
 
 pub enum ElementData {

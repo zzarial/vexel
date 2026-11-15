@@ -13,10 +13,10 @@ pub fn read_event() -> Option<Event> {
         // --- клавиатура ---
         CTEvent::Key(key) => match key.code {
             KeyCode::Char(c) => Some(Event::Key(c)),
-            //TODO остальные символы
             KeyCode::Enter => Some(Event::Enter),
             KeyCode::Tab => Some(Event::Tab),
             KeyCode::Esc => Some(Event::Escape),
+            KeyCode::Backspace => Some(Event::Backspace),
             _ => None,
         },
         // --- мышь ---
@@ -34,7 +34,7 @@ pub fn read_event() -> Option<Event> {
 pub fn dispatch(event: Event, app: &mut AppState, r: &crate::render::Renderer) {
     match event {
         // событие идет в focus el
-        Event::Key(_) | Event::Enter | Event::Tab | Event::Escape => {
+        Event::Key(_) | Event::Enter | Event::Tab | Event::Escape | Event::Backspace => {
             let target = app.focused;
             call_on_key(app, target, event);
         }

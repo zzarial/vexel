@@ -186,8 +186,18 @@ fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
         // dim: placeholder рисуется приглушённым серым, чтобы отличать от введённого
         let (text, dim) = if value.is_empty() { (placeholder, true) } else { (value, false) };
         let fg = if dim { Color::Named(NamedColor::BrightBlack) } else { el.style.color };
-        for (i, ch) in text.chars().take((width - 2) as usize).enumerate() {
-            buf.set(x + 1 + i as u16, y + height / 2, Cell { ch, fg, bg: el.style.background });
+
+        // перенос: бьём текст на куски по ширине строки (width - 2)
+        // и рисуем каждый кусок на своей строке внутри рамки
+        let line_len = (width - 2) as usize;
+        let rows = (height - 2) as usize; // сколько строк влезает внутри рамки
+        let mut row = 0;
+        for (chunk_i, chunk) in text.chars().collect::<Vec<char>>().chunks(line_len).enumerate() {
+            if chunk_i >= rows { break; } // не влезает в высоту — остальное за кадром
+            for (i, ch) in chunk.iter().enumerate() {
+                buf.set(x + 1 + i as u16, y + 1 + row as u16, Cell { ch: *ch, fg, bg: el.style.background });
+            }
+            row += 1;
         }
     }
 }

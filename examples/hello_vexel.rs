@@ -1,3 +1,4 @@
+// cargo run --example hello_vexel
 use vexel::{Element, ElementCode, AppState, Style, Event};
 use vexel::render::Renderer;
 use vexel::events::{poll_event, read_event, dispatch};
