@@ -133,6 +133,20 @@ impl Element {
     }
 }
 
+pub fn clone_element(el: &Element) -> Element {
+    Element {
+        id: el.id.clone(),
+        index: el.index,
+        data: el.data.clone(),
+        style: el.style.clone(),
+        children: el.children.clone(),
+        parent: el.parent,
+        code: None,
+        dirty: false,
+    }
+  }
+
+
 pub struct ElementCode {
     pub on_click: Option<Box<dyn Fn(Event, &mut AppState)>>,
     pub on_key: Option<Box<dyn Fn(Event, &mut AppState)>>,
@@ -148,6 +162,7 @@ pub enum Event {
     Backspace,
 }
 
+#[derive(Clone)]
 pub enum ElementData {
     BoxData,
     TextData(String),
@@ -158,6 +173,7 @@ pub enum ElementData {
     },
 }
 
+#[derive(Clone)]
 pub struct Style {
     pub x: i16,
     pub y: i16,
@@ -190,6 +206,7 @@ impl Default for Style {
     }
 }
 
+#[derive(Clone)]
 pub struct Border {
     pub width: u8,
     pub color: Color,

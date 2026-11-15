@@ -1,5 +1,5 @@
 use std::io::{self, Write};
-use crate::{AppState, Element, ElementData, Position, Color, NamedColor};
+use crate::{AppState, Element, ElementData, Position, Color, NamedColor, clone_element};
 
 use crossterm::{
     cursor::{MoveTo, Hide},
@@ -135,11 +135,17 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
     if idx >= rects.len() {
         rects.resize(idx + 1, Rect { x: 0, y: 0, w: 0, h: 0, index: 0 });
     }
+    // input растёт по высоте: текст не влез в строки — высота увеличивается.
+    // style.height для input = минимальная высота
+    let h = match &el.data {
+        ElementData::InputData { .. } => input_needed_height(el),
+        _ => el.style_height(),
+    };
     rects[idx] = Rect {
         x,
         y,
         w: el.style_width(),
-        h: el.style_height(),
+        h,
         index: el.index,
     };
 
@@ -176,10 +182,13 @@ fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, label: &str) {
 }
 
 fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
-    draw_box(buf, el, x, y);
+    let height = input_needed_height(el);
+    let mut clone = clone_element(&el);
+    clone.style.height = height;
+    draw_box(buf, &clone, x, y);
 
-    let (width, height) = (el.style_width(), el.style_height());
-    if width < 3 || height == 0 { return; }
+    let width = el.style_width();
+    if width < 3 || height < 2 { return; }
 
     if let ElementData::InputData { placeholder, value } = &el.data {
         // value непустой ? показываем value : показываем placeholder
@@ -187,18 +196,31 @@ fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
         let (text, dim) = if value.is_empty() { (placeholder, true) } else { (value, false) };
         let fg = if dim { Color::Named(NamedColor::BrightBlack) } else { el.style.color };
 
-        // перенос: бьём текст на куски по ширине строки (width - 2)
-        // и рисуем каждый кусок на своей строке внутри рамки
         let line_len = (width - 2) as usize;
         let rows = (height - 2) as usize; // сколько строк влезает внутри рамки
         let mut row = 0;
         for (chunk_i, chunk) in text.chars().collect::<Vec<char>>().chunks(line_len).enumerate() {
-            if chunk_i >= rows { break; } // не влезает в высоту — остальное за кадром
+            if chunk_i >= rows { break; }
             for (i, ch) in chunk.iter().enumerate() {
                 buf.set(x + 1 + i as u16, y + 1 + row as u16, Cell { ch: *ch, fg, bg: el.style.background });
             }
             row += 1;
         }
+    }
+}
+
+// сколько строк занимает текст input'а + рамка сверху и снизу
+fn input_needed_height(el: &Element) -> u16 {
+    if let ElementData::InputData { placeholder, value } = &el.data {
+        let (text, _) = if value.is_empty() { (placeholder, true) } else { (value, false) };
+        let width = el.style_width();
+        if width < 3 { return el.style_height(); } // строк нет, рисовать нечего — минимум
+        let line_len = (width - 2) as usize;
+        let lines = text.chars().count().div_ceil(line_len).max(1);
+        // высота = строки текста + 2 рамки, но не меньше style.height
+        (lines as u16 + 2).max(el.style_height())
+    } else {
+        el.style_height()
     }
 }
 
