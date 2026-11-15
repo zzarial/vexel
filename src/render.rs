@@ -143,7 +143,6 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
         index: el.index,
     };
 
-    // невидимый сам не рисуется, но дети да
     if el.style.visible {
         match &el.data {
             ElementData::TextData(text) => {
@@ -155,10 +154,9 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
             ElementData::ButtonData { label } => draw_button(buf, el, x, y, label),
             ElementData::InputData { .. } => draw_input(buf, el, x, y),
         }
-    }
-
-    for &child_idx in &el.children {
-        draw_element(buf, rects, app, &app.elements[child_idx], x, y);
+        for &child_idx in &el.children {
+            draw_element(buf, rects, app, &app.elements[child_idx], x, y);
+        }
     }
 }
 
