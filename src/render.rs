@@ -1,10 +1,10 @@
 use std::io::{self, Write};
-use crate::{AppState, Element, ElementData, Position, Color, NamedColor, clone_element};
+use crate::{AppState, Element, ElementData, Position, Color, NamedColor};
 
 use crossterm::{
-    cursor::{MoveTo, Hide},
-    style::{Color as CTColor, Print, SetForegroundColor, SetBackgroundColor},
-    terminal::{self, Clear, ClearType, enable_raw_mode},
+    cursor::{MoveTo, Hide, Show},
+    style::{Color as CTColor, Print, SetForegroundColor, SetBackgroundColor, SetAttribute, Attribute},
+    terminal::{self, Clear, ClearType, enable_raw_mode, disable_raw_mode},
     ExecutableCommand, QueueableCommand,
 };
 
@@ -13,11 +13,14 @@ pub struct Cell {//символ
     pub ch: char,
     pub fg: Color,
     pub bg: Option<Color>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: ' ', fg: Color::WHITE, bg: None }
+        Self { ch: ' ', fg: Color::WHITE, bg: None, bold: false, italic: false, underline: false }
     }
 }
 
@@ -36,7 +39,7 @@ impl Buffer {
         }
     }
 
-        pub fn set(&mut self, x: u16, y: u16, cell: Cell) {
+    pub fn set(&mut self, x: u16, y: u16, cell: Cell) {
         if x >= self.width || y >= self.height { return; }//за пределами экрана - обрезание
         let i = y as usize * self.width as usize + x as usize;
         self.cells[i] = cell;
@@ -46,7 +49,10 @@ impl Buffer {
 // разница между кадрами: только изменившиеся ячейки
 pub fn diff(old: &Buffer, new: &Buffer) -> Vec<(u16, u16, Cell)> {//сравнение прошлого и текущего кадров
     let mut out = Vec::new();
-    for i in 0..new.cells.len() {
+    if new.width == 0 { return out; } // деление на ширину ниже
+    // буферы разного размера бывают только сразу после ресайза, render их сбрасывает
+    let len = old.cells.len().min(new.cells.len());
+    for i in 0..len {
         if old.cells[i] != new.cells[i] {
             let x = (i % new.width as usize) as u16;
             let y = (i / new.width as usize) as u16;
@@ -56,7 +62,6 @@ pub fn diff(old: &Buffer, new: &Buffer) -> Vec<(u16, u16, Cell)> {//сравне
     out
 }
 
-//позиция вектора != индекс элемента
 #[derive(Clone, Copy)]
 pub struct Rect {
     pub x: u16,
@@ -69,52 +74,81 @@ pub struct Rect {
 // владеет бек буфером между кадрами
 pub struct Renderer {
     back: Buffer,
+    front: Buffer,// между кадрами
     rects: Vec<Rect>,
+    initialized: bool,// raw mode + скрытый курсор включаются один раз, на первом кадре
+}
+
+impl Default for Renderer {
+    fn default() -> Self { Self::new() }
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        Self { back: Buffer::new(0, 0), rects: Vec::new() }
+        Self { back: Buffer::new(0, 0), front: Buffer::new(0, 0), rects: Vec::new(), initialized: false }
     }
 
     pub fn render(&mut self, app: &AppState) -> io::Result<()> {
-        enable_raw_mode()?;
         let mut stdout = io::stdout();
+
+        if !self.initialized {
+            enable_raw_mode()?;
+            stdout.execute(Hide)?;
+            self.initialized = true;
+        }
 
         let (w, h) = terminal::size()?;
         //ресайз терминала. буферы несовместимы, полный сброс
         if self.back.width != w || self.back.height != h {
             stdout.execute(Clear(ClearType::All))?;
             self.back = Buffer::new(w, h);
+            self.front = Buffer::new(w, h);
         }
 
         //1 заполняем фронт буфер (без stdout)
-        let mut front = Buffer::new(w, h);
+        self.front.cells.fill(Cell::default());
         self.rects.clear(); // каждый кадр заново: дерево могло измениться
         let root = &app.elements[0];
-        draw_element(&mut front, &mut self.rects, app, root, 0, 0);
+        draw_element(&mut self.front, &mut self.rects, app, root, 0, 0);
 
         //2 сравнение буферов, в stdout уезжает только разница
-        stdout.execute(Hide)?;
-        for (x, y, cell) in diff(&self.back, &front) {
+        // кэш цветов: слать SGR только при смене; Attribute::Reset сбрасывает и цвета
+        let mut last_fg: Option<Color> = None;
+        let mut last_bg: Option<Option<Color>> = None;
+        for (x, y, cell) in diff(&self.back, &self.front) {
             stdout.queue(MoveTo(x, y))?;
-            stdout.queue(SetForegroundColor(to_ct(cell.fg)))?;
-            if let Some(bg) = cell.bg {
-                stdout.queue(SetBackgroundColor(to_ct(bg)))?;
+            if last_fg != Some(cell.fg) {
+                stdout.queue(SetForegroundColor(to_ct(cell.fg)))?;
+                last_fg = Some(cell.fg);
             }
+            // без фона в терминале останется фон предыдущей ячейки, поэтому None = Reset
+            if last_bg != Some(cell.bg) {
+                match cell.bg {
+                    Some(bg) => { stdout.queue(SetBackgroundColor(to_ct(bg)))?; }
+                    None => { stdout.queue(SetBackgroundColor(CTColor::Reset))?; }
+                }
+                last_bg = Some(cell.bg);
+            }
+            // атрибуты: включаем → печатаем → сбрасываем (иначе залипнут на следующие ячейки)
+            if cell.bold { stdout.queue(SetAttribute(Attribute::Bold))?; }
+            if cell.italic { stdout.queue(SetAttribute(Attribute::Italic))?; }
+            if cell.underline { stdout.queue(SetAttribute(Attribute::Underlined))?; }
             stdout.queue(Print(cell.ch))?;
+            if cell.bold || cell.italic || cell.underline {
+                stdout.queue(SetAttribute(Attribute::Reset))?;
+                last_fg = None;// Reset сбросил и цвета
+                last_bg = None;
+            }
         }
         stdout.flush()?;
 
-        //3 свап: фронт меняется с бек буфером
-        self.back = front;
+        //3 свап: фронт становится бек буфером
+        std::mem::swap(&mut self.back, &mut self.front);
         Ok(())
     }
     pub fn hit_test(&self, x: u16, y: u16) -> Option<usize> {
-        for i in (0..self.rects.len()).rev() {
-            let r = &self.rects[i];
-            //u32, x+w может переполнить u16
-            let (x, y) = (x as u32, y as u32);
+        let (x, y) = (x as u32, y as u32);//u32: x+w может переполнить u16
+        for r in self.rects.iter().rev() {
             if x >= r.x as u32 && x < r.x as u32 + r.w as u32 && y >= r.y as u32 && y < r.y as u32 + r.h as u32 {
                 return Some(r.index);
             }
@@ -123,24 +157,67 @@ impl Renderer {
     }
 }
 
+// терминал возвращается в нормальное состояние даже при панике
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        if !self.initialized { return; }
+        let mut stdout = io::stdout();
+        let _ = disable_raw_mode();
+        let _ = stdout.execute(Show);
+    }
+}
+
+fn draw_text(buf: &mut Buffer, el: &Element, x: u16, y: u16, text: &str) {
+    let (fg, bg) = (el.style.color, el.style.background);
+    let bold = el.style.text_style.bold();
+    let italic = el.style.text_style.italic();
+    let underline = el.style.text_style.underline();
+
+    // height = 0 у текста трактуем как одну строку, иначе фон пропал бы совсем
+    if let Some(bg) = bg {
+        let rows = el.style_height().max(1);
+        for row in 0..rows {
+            for col in 0..el.style_width() {
+                buf.set(x.saturating_add(col), y.saturating_add(row), Cell { ch: ' ', fg, bg: Some(bg), bold, italic, underline });
+            }
+        }
+    }
+    // рамка поверх заливки, если задана. draw_box заливает фон повторно тем же цветом — безвредно
+    if el.style.border.is_some() {
+        draw_box(buf, el, x, y);
+    }
+
+    // padding тоже внутренняя территория: текст рисуется внутри него, как в button/input
+    let inset = content_inset(el);
+    let tx = x.saturating_add(inset);
+    let ty = y.saturating_add(inset);
+    let max_chars = el.style_width().saturating_sub(inset.saturating_mul(2)) as usize;
+    for (i, ch) in text.chars().take(max_chars).enumerate() {
+        buf.set(tx.saturating_add(i as u16), ty, Cell { ch, fg, bg, bold, italic, underline });
+    }
+}
+
 fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &Element, parent_x: u16, parent_y: u16) {
+    let margin = el.style.margin;
+    // saturating: координаты приходят из i16/style, лишний сдвиг не должен паниковать
     let (x, y) = if el.style_position() == Position::Relative {
-        (parent_x + el.style_x(), parent_y + el.style_y())
+        (parent_x.saturating_add(el.style_x()).saturating_add(margin),
+         parent_y.saturating_add(el.style_y()).saturating_add(margin))
     } else {
-        (el.style_x(), el.style_y())
+        (el.style_x().saturating_add(margin), el.style_y().saturating_add(margin))
     };
 
+    if !el.style.visible { return; }// скрытый элемент не рисуется и в rects не попадает
+
     // кэш координат элементов (rect)
-    let idx = el.index as usize;
-    if idx >= rects.len() {
-        rects.resize(idx + 1, Rect { x: 0, y: 0, w: 0, h: 0, index: 0 });
-    }
-    // input растёт по высоте: текст не влез в строки — высота увеличивается.
-    // style.height для input = минимальная высота
+    let idx = el.index;
     let h = match &el.data {
         ElementData::InputData { .. } => input_needed_height(el),
         _ => el.style_height(),
     };
+    if idx >= rects.len() {
+        rects.resize(idx + 1, Rect { x: 0, y: 0, w: 0, h: 0, index: 0 });
+    }
     rects[idx] = Rect {
         x,
         y,
@@ -149,21 +226,26 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
         index: el.index,
     };
 
-    if el.style.visible {
-        match &el.data {
-            ElementData::TextData(text) => {
-                for (i, ch) in text.chars().enumerate() {
-                    buf.set(x + i as u16, y, Cell { ch, fg: el.style.color, bg: el.style.background });
-                }
-            }
-            ElementData::BoxData => draw_box(buf, el, x, y),
-            ElementData::ButtonData { label } => draw_button(buf, el, x, y, label),
-            ElementData::InputData { .. } => draw_input(buf, el, x, y),
-        }
-        for &child_idx in &el.children {
-            draw_element(buf, rects, app, &app.elements[child_idx], x, y);
-        }
+    match &el.data {
+        ElementData::TextData(text) => draw_text(buf, el, x, y, text),
+        ElementData::BoxData => draw_box(buf, el, x, y),
+        ElementData::ButtonData { label } => draw_button(buf, el, x, y, label),
+        ElementData::InputData { .. } => draw_input(buf, el, x, y),
     }
+
+    // дети считаются от контента: рамка и padding не их территория.
+    // inset = border(1 если есть) + padding
+    let inset = content_inset(el);
+    let (cx, cy) = (x.saturating_add(inset), y.saturating_add(inset));
+    for &child_idx in &el.children {
+        draw_element(buf, rects, app, &app.elements[child_idx], cx, cy);
+    }
+}
+
+// отступ контента от внешней рамки: рамка + padding
+fn content_inset(el: &Element) -> u16 {
+    let border: u16 = if el.style.border.is_some() { 1 } else { 0 };
+    border.saturating_add(el.style.padding)
 }
 
 fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, label: &str) {
@@ -172,84 +254,127 @@ fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, label: &str) {
     let (width, height) = (el.style_width(), el.style_height());
     if width == 0 || height == 0 { return; }
 
-    // label(текст) по центру: смещение = (ширина - длина текста) / 2
+    // рамка + padding — внутренняя территория кнопки
+    let inset = content_inset(el);
+    // saturating: width=1 + рамка = underflow в u16 (паника на debug)
+    let (iw, ih) = (width.saturating_sub(inset.saturating_mul(2)), height.saturating_sub(inset.saturating_mul(2)));
+    if iw == 0 || ih == 0 { return; }
+
+    //label(текст) по центру, обрезается по ширине, стиль из Style
+    let bold = el.style.text_style.bold();
+    let italic = el.style.text_style.italic();
+    let underline = el.style.text_style.underline();
     let len = label.chars().count() as u16;
-    let tx = x + (width.saturating_sub(len)) / 2;
-    let ty = y + height / 2;
-    for (i, ch) in label.chars().enumerate() {
-        buf.set(tx + i as u16, ty, Cell { ch, fg: el.style.color, bg: el.style.background });
+    let tx = x.saturating_add(inset).saturating_add(iw.saturating_sub(len) / 2);
+    let ty = y.saturating_add(inset).saturating_add(ih / 2);
+    for (i, ch) in label.chars().take(iw as usize).enumerate() {
+        buf.set(tx.saturating_add(i as u16), ty, Cell { ch, fg: el.style.color, bg: el.style.background, bold, italic, underline });
     }
 }
 
 fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
+    // input выше объявленной высоты, если текст не влез: рисуем box с реальной высотой
     let height = input_needed_height(el);
-    let mut clone = clone_element(&el);
-    clone.style.height = height;
-    draw_box(buf, &clone, x, y);
+    draw_box_sized(buf, el, x, y, height);
 
     let width = el.style_width();
-    if width < 3 || height < 2 { return; }
+    // рамка занимает 1 колонку/строку с каждой стороны, padding тоже внутренняя территория
+    let inset = content_inset(el);
+    let (iw, ih) = (width.saturating_sub(inset.saturating_mul(2)), height.saturating_sub(inset.saturating_mul(2)));
+    if iw == 0 || ih == 0 { return; }
 
     if let ElementData::InputData { placeholder, value } = &el.data {
         // value непустой ? показываем value : показываем placeholder
         // dim: placeholder рисуется приглушённым серым, чтобы отличать от введённого
         let (text, dim) = if value.is_empty() { (placeholder, true) } else { (value, false) };
         let fg = if dim { Color::Named(NamedColor::BrightBlack) } else { el.style.color };
+        let bold = el.style.text_style.bold();
+        let italic = el.style.text_style.italic();
+        let underline = el.style.text_style.underline();
 
-        let line_len = (width - 2) as usize;
-        let rows = (height - 2) as usize; // сколько строк влезает внутри рамки
-        let mut row = 0;
-        for (chunk_i, chunk) in text.chars().collect::<Vec<char>>().chunks(line_len).enumerate() {
-            if chunk_i >= rows { break; }
+        let line_len = iw as usize;
+        let rows = ih as usize; // сколько строк влезает внутри
+        let (tx, ty) = (x.saturating_add(inset), y.saturating_add(inset));
+        for (row, chunk) in text.chars().collect::<Vec<char>>().chunks(line_len).enumerate() {
+            if row >= rows { break; }
             for (i, ch) in chunk.iter().enumerate() {
-                buf.set(x + 1 + i as u16, y + 1 + row as u16, Cell { ch: *ch, fg, bg: el.style.background });
+                buf.set(tx.saturating_add(i as u16), ty.saturating_add(row as u16), Cell { ch: *ch, fg, bg: el.style.background, bold, italic, underline });
             }
-            row += 1;
         }
     }
 }
 
-// сколько строк занимает текст input'а + рамка сверху и снизу
+// сколько строк занимает текст input + рамка/padding сверху и снизу
 fn input_needed_height(el: &Element) -> u16 {
     if let ElementData::InputData { placeholder, value } = &el.data {
         let (text, _) = if value.is_empty() { (placeholder, true) } else { (value, false) };
         let width = el.style_width();
-        if width < 3 { return el.style_height(); } // строк нет, рисовать нечего — минимум
-        let line_len = (width - 2) as usize;
-        let lines = text.chars().count().div_ceil(line_len).max(1);
-        // высота = строки текста + 2 рамки, но не меньше style.height
-        (lines as u16 + 2).max(el.style_height())
+        let inset = content_inset(el);
+        let iw = width.saturating_sub(inset.saturating_mul(2));
+        if iw == 0 { return el.style_height(); } // строк нет, рисовать нечего — минимум
+        // пустой placeholder = 0 строк, div_ceil(0) = 0; ниже max(1) защищает от height без контента
+        let lines = text.chars().count().div_ceil(iw as usize).max(1);
+        // высота = строки текста + inset сверху и снизу, но не меньше style.height
+        (lines as u16).saturating_add(inset.saturating_mul(2)).max(el.style_height())
     } else {
         el.style_height()
     }
 }
 
 fn draw_box(buf: &mut Buffer, el: &Element, x: u16, y: u16) {
-    let (width, height) = (el.style_width(), el.style_height());
+    draw_box_sized(buf, el, x, y, el.style_height());
+}
+
+// box с явной высотой (input растёт под текст, не меняя style)
+fn draw_box_sized(buf: &mut Buffer, el: &Element, x: u16, y: u16, height: u16) {
+    let (width, height) = (el.style_width(), height);
+    if width == 0 || height == 0 { return; }
+
+    // заливка фоном всей площади
+    if let Some(bg) = el.style.background {
+        for row in 0..height {
+            for col in 0..width {
+                buf.set(x.saturating_add(col), y.saturating_add(row), Cell { ch: ' ', fg: el.style.color, bg: Some(bg), ..Default::default() });
+            }
+        }
+    }
+
+    let border = match &el.style.border {
+        Some(b) => b,
+        None => return, // рамки нет - box это чистая заливка
+    };
+    let border_cell = Cell { ch: ' ', fg: border.color, bg: el.style.background, ..Default::default() };
+
+    // saturating: x + width может выйти за u16, Buffer::set всё равно обрежет
+    let right = x.saturating_add(width - 1);
+    let bottom = y.saturating_add(height - 1);
+
     if width < 2 || height < 2 {
-        if width >= 1 && height >= 1 {
-            buf.set(x, y, Cell { ch: '│', fg: el.style.color, bg: el.style.background });
+        // рамка не влезает: однострочный box = сплошные ─, узкий = │
+        if height == 1 {
+            for i in 0..width {
+                buf.set(x.saturating_add(i), y, Cell { ch: '─', ..border_cell });
+            }
+        } else if width == 1 {
+            for row in 0..height {
+                buf.set(x, y.saturating_add(row), Cell { ch: '│', ..border_cell });
+            }
         }
         return;
     }
-    for i in 0..width {
-        buf.set(x + i, y, cell(el, '─'));
-        buf.set(x + i, y + height - 1, cell(el, '─'));
-    }
-    //вертикальные стороны без углов (0 и height-1)  их ставит горизонтальный проход
-    for row in 1..height - 1 {
-        buf.set(x, y + row, cell(el, '│'));
-        buf.set(x + width - 1, y + row, cell(el, '│'));
-    }
-    //углы один раз, последними
-    buf.set(x, y, cell(el, '┌'));
-    buf.set(x + width - 1, y, cell(el, '┐'));
-    buf.set(x, y + height - 1, cell(el, '└'));
-    buf.set(x + width - 1, y + height - 1, cell(el, '┘'));
-}
 
-fn cell(el: &Element, ch: char) -> Cell {
-    Cell { ch, fg: el.style.color, bg: el.style.background }
+    for i in 0..width {
+        buf.set(x.saturating_add(i), y, Cell { ch: '─', ..border_cell });
+        buf.set(x.saturating_add(i), bottom, Cell { ch: '─', ..border_cell });
+    }
+    for row in 1..height - 1 {
+        buf.set(x, y.saturating_add(row), Cell { ch: '│', ..border_cell });
+        buf.set(right, y.saturating_add(row), Cell { ch: '│', ..border_cell });
+    }
+    buf.set(x, y, Cell { ch: '┌', ..border_cell });
+    buf.set(right, y, Cell { ch: '┐', ..border_cell });
+    buf.set(x, bottom, Cell { ch: '└', ..border_cell });
+    buf.set(right, bottom, Cell { ch: '┘', ..border_cell });
 }
 
 fn to_ct(c: Color) -> CTColor {

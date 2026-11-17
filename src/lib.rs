@@ -21,7 +21,7 @@ impl AppState {
             dirty: false,
         };
         let root_index = root.index;
-        Self {   
+        Self {
             elements: vec![root],
             cursor: root_index,
             focused: root_index,
@@ -34,6 +34,7 @@ impl AppState {
         let idx = self.elements.len();
         element.dirty = true;
         element.index = idx;
+        element.parent = self.cursor;
         self.elements.push(element);
         self.elements[self.cursor].children.push(idx);
         self.prev = self.cursor;
@@ -43,21 +44,33 @@ impl AppState {
         let idx = self.elements.len();
         element.dirty = true;
         element.index = idx;
-        self.elements.push(element);
         let copy = self.cursor;
         self.cursor_up();
+        element.parent = self.cursor;// сосед = в того же родителя, что и текущий
+        self.elements.push(element);
         self.elements[self.cursor].children.push(idx);
         self.prev = copy;
         self.cursor = idx;
     }
     pub fn delete_element(&mut self, index: usize) {
-        let el = &mut self.elements[index];
+        let Some(el) = self.elements.get_mut(index) else { return };
         el.style.visible = false;
+        // фокус не должен висеть на скрытом элементе, иначе клавиши уходят в пустоту
+        if self.focused == index {
+            self.focused = el.parent;
+        }
     }
-    pub fn update_element(&mut self, element: Element) { 
+    pub fn update_element(&mut self, mut element: Element) {
         let idx = element.index;
+        let Some(slot) = self.elements.get_mut(idx) else { return };
+        // дерево не переносится обновлением: у свежего Element parent=0, children пусты.
+        // без этого дети отвязались бы от родителя, а элемент уехал в root
+        element.parent = slot.parent;
+        if element.children.is_empty() {
+            element.children = std::mem::take(&mut slot.children);
+        }
         self.cursor = idx;
-        self.elements[idx] = element;
+        *slot = element;
     }
     pub fn cursor_up(&mut self) {
         if self.cursor == 0 { return }
@@ -68,11 +81,9 @@ impl AppState {
         if self.elements[self.cursor].children.is_empty() { return }
         self.prev = self.cursor;
         self.cursor = self.elements[self.cursor].children[0];
-    } 
+    }
     pub fn back_cursor(&mut self) {
-        let a = self.cursor;
-        self.cursor = self.prev;
-        self.prev = a;
+        std::mem::swap(&mut self.cursor, &mut self.prev);
     }
 }
 
@@ -151,14 +162,18 @@ pub struct ElementCode {
     pub on_click: Option<Box<dyn Fn(Event, &mut AppState)>>,
     pub on_key: Option<Box<dyn Fn(Event, &mut AppState)>>,
     pub on_render: Option<Box<dyn Fn(&mut Element)>>,
+    
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub enum Event {
     Click { x: u16, y: u16 },
     Key(char),
     Enter,
     Tab,
     Escape,
+    Up,
+    Down,
     Backspace,
 }
 
@@ -183,8 +198,9 @@ pub struct Style {
     pub color: Color,
     pub background: Option<Color>,
     pub border: Option<Border>,
-    pub padding: usize,//внутреннй отсуп
-    pub margin: usize,//внешний отсуп 
+    pub text_style: TextStyle,//жирность/курсив/подчёркивание — единственный источник стилей текста
+    pub padding: u16,//внутреннй отсуп
+    pub margin: u16,//внешний отсуп
     pub visible: bool,
 }
 
@@ -199,10 +215,37 @@ impl Default for Style {
             color: Color::WHITE,
             background: None,
             border: None,
+            text_style: TextStyle::Normal,
             padding: 0,
             margin: 0,
             visible: true,
         }
+    }
+}
+
+// атрибуты текста: все комбинации 3 флагов (2^3)
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum TextStyle {
+    #[default]
+    Normal,
+    Bold,
+    Italic,
+    Underline,
+    BoldItalic,
+    BoldUnderline,
+    ItalicUnderline,
+    BoldItalicUnderline,
+}
+
+impl TextStyle {
+    pub fn bold(&self) -> bool {
+        matches!(self, TextStyle::Bold | TextStyle::BoldItalic | TextStyle::BoldUnderline | TextStyle::BoldItalicUnderline)
+    }
+    pub fn italic(&self) -> bool {
+        matches!(self, TextStyle::Italic | TextStyle::BoldItalic | TextStyle::ItalicUnderline | TextStyle::BoldItalicUnderline)
+    }
+    pub fn underline(&self) -> bool {
+        matches!(self, TextStyle::Underline | TextStyle::BoldUnderline | TextStyle::ItalicUnderline | TextStyle::BoldItalicUnderline)
     }
 }
 

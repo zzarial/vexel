@@ -1,5 +1,5 @@
 use std::time::Duration;
-use crossterm::event::{self, Event as CTEvent, KeyCode, MouseEventKind, MouseButton};
+use crossterm::event::{self, Event as CTEvent, KeyCode, KeyEventKind, MouseEventKind, MouseButton};
 
 use crate::{AppState, Event};
 
@@ -7,16 +7,19 @@ use crate::{AppState, Event};
 pub fn poll_event(timeout: Duration) -> bool {
     event::poll(timeout).unwrap_or(false)
 }
-//переводит crossterm event type в lib/Event 
+//переводит crossterm event type в lib/Event
 pub fn read_event() -> Option<Event> {
     match event::read().ok()? {
         // --- клавиатура ---
-        CTEvent::Key(key) => match key.code {
+        // kitty protocol шлёт Press/Repeat/Release: без фильтра символ вводится дважды
+        CTEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Char(c) => Some(Event::Key(c)),
             KeyCode::Enter => Some(Event::Enter),
             KeyCode::Tab => Some(Event::Tab),
             KeyCode::Esc => Some(Event::Escape),
             KeyCode::Backspace => Some(Event::Backspace),
+            KeyCode::Up => Some(Event::Up),
+            KeyCode::Down => Some(Event::Down),
             _ => None,
         },
         // --- мышь ---
@@ -34,48 +37,41 @@ pub fn read_event() -> Option<Event> {
 pub fn dispatch(event: Event, app: &mut AppState, r: &crate::render::Renderer) {
     match event {
         // событие идет в focus el
-        Event::Key(_) | Event::Enter | Event::Tab | Event::Escape | Event::Backspace => {
+        Event::Key(_) | Event::Enter | Event::Tab | Event::Escape | Event::Backspace | Event::Up | Event::Down => {
             let target = app.focused;
             call_on_key(app, target, event);
         }
         // найти элемент клика, сфокусирвоать, вызвать on_click
         Event::Click { x, y } => {
             if let Some(target) = r.hit_test(x, y) {
-                app.focused = target;  
+                app.focused = target;
                 call_on_click(app, target, event);
             }
         }
     }
 }
 
-//вызов кулбеков
-fn call_on_key(app: &mut AppState, target: usize, event: Event) {
-    let mut cb: Option<Box<dyn Fn(Event, &mut AppState)>> = None;// есть ли code и on_key?
-    if let Some(code) = app.elements[target].code.as_mut() {//  колбэк лежит внтури app, а вызывать его надо С app.
-        cb = code.on_key.take(); //  держать ссылку и мутировать нельзя. take на время. 
-    }
+// колбэк лежит внутри app, а вызывать его надо С app -> take на время вызова
+fn take_key(app: &mut AppState, target: usize) -> Option<Box<dyn Fn(Event, &mut AppState)>> {
+    app.elements.get_mut(target)?.code.as_mut()?.on_key.take()
+}
+fn take_click(app: &mut AppState, target: usize) -> Option<Box<dyn Fn(Event, &mut AppState)>> {
+    app.elements.get_mut(target)?.code.as_mut()?.on_click.take()
+}
 
-    if let Some(cb) = cb {
-        cb(event, app);
-        // вернуть колбэк обратно
-        if let Some(code) = app.elements[target].code.as_mut() {
-            code.on_key = Some(cb);
-        }
+fn call_on_key(app: &mut AppState, target: usize, event: Event) {
+    let Some(cb) = take_key(app, target) else { return };
+    cb(event, app);
+    // колбэк мог удалить элемент -> put через get_mut, не индексация
+    if let Some(code) = app.elements.get_mut(target).and_then(|e| e.code.as_mut()) {
+        code.on_key = Some(cb);
     }
 }
 
 fn call_on_click(app: &mut AppState, target: usize, event: Event) {
-    let mut cb: Option<Box<dyn Fn(Event, &mut AppState)>> = None;
-
-    if let Some(code) = app.elements[target].code.as_mut() {
-        cb = code.on_click.take();
-    }
-
-    if let Some(cb) = cb {
-        cb(event, app);
-
-        if let Some(code) = app.elements[target].code.as_mut() {
-            code.on_click = Some(cb);
-        }
+    let Some(cb) = take_click(app, target) else { return };
+    cb(event, app);
+    if let Some(code) = app.elements.get_mut(target).and_then(|e| e.code.as_mut()) {
+        code.on_click = Some(cb);
     }
 }
