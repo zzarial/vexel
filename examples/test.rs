@@ -416,12 +416,14 @@ fn open_modal(app: &mut AppState) {
             width: 36,
             height: 1,
             color: Color::Named(NamedColor::BrightWhite),
+            background: Some(Color::Rgb(Rgb { r: 30, g: 30, b: 45 })),
             text_style: TextStyle::Bold,
             ..Default::default()
         },
     ));
 
     let mut close = Element::button("modal_close", "close", button_style(12, 5, 16));
+    close.style.background = Some(Color::Rgb(Rgb { r: 30, g: 30, b: 45 }));
     close.code = Some(ElementCode {
         on_click: Some(Box::new(|_, app: &mut AppState| close_modal(app))),
         on_key: Some(Box::new(|event, app: &mut AppState| {
@@ -593,6 +595,76 @@ fn build_misc(app: &mut AppState) {
     ));
 }
 
+// ───────────── темы ─────────────
+
+// кастомная тема: палитра перекрывает значения NamedColor,
+// placeholder приглушается формулой (blend с фоном)
+fn theme_custom() -> vexel::Theme {
+    use std::collections::HashMap;
+    let mut palette = HashMap::new();
+    palette.insert(NamedColor::Red, Color::Rgb(Rgb { r: 255, g: 60, b: 60 }));
+    palette.insert(NamedColor::White, Color::Rgb(Rgb { r: 240, g: 240, b: 240 }));
+    palette.insert(NamedColor::BrightWhite, Color::Rgb(Rgb { r: 255, g: 255, b: 255 }));
+    vexel::Theme {
+        background: Color::Rgb(Rgb { r: 18, g: 20, b: 28 }),
+        palette,
+    }
+}
+
+// блок-свитч тем: 4 кнопки, каждая ставит свою тему в app.theme
+fn build_themes(app: &mut AppState) {
+    add_root(app, Element::container("box_themes", Style {
+        x: 1,
+        y: 31,
+        width: 64,
+        height: 7,
+        border: Some(Border { width: 1, color: Color::Named(NamedColor::BrightYellow) }),
+        ..Default::default()
+    }));
+
+    add_child_of(app, "box_themes", Element::text(
+        "themes_title",
+        "темы: дефолт / кастом (палитра) / светлая",
+        Style { x: 1, y: 0, width: 60, height: 1, ..Default::default() },
+    ));
+
+    let mut theme_default = Element::button("theme_default", "default", button_style(1, 2, 13));
+    theme_default.code = Some(ElementCode {
+        on_click: Some(Box::new(|_, app: &mut AppState| {
+            app.theme = vexel::Theme::default();
+            set_status(app, "theme: default");
+        })),
+        on_key: None,
+        on_render: None,
+    });
+    add_child_of(app, "box_themes", theme_default);
+
+    let mut theme_custom_btn = Element::button("theme_custom", "custom", button_style(15, 2, 13));
+    theme_custom_btn.code = Some(ElementCode {
+        on_click: Some(Box::new(|_, app: &mut AppState| {
+            app.theme = theme_custom();
+            set_status(app, "theme: custom");
+        })),
+        on_key: None,
+        on_render: None,
+    });
+    app.push_sibling(theme_custom_btn);
+
+    let mut theme_light = Element::button("theme_light", "light", button_style(29, 2, 13));
+    theme_light.code = Some(ElementCode {
+        on_click: Some(Box::new(|_, app: &mut AppState| {
+            app.theme = vexel::Theme {
+                background: Color::Rgb(Rgb { r: 235, g: 235, b: 230 }),
+                ..Default::default()
+            };
+            set_status(app, "theme: light");
+        })),
+        on_key: None,
+        on_render: None,
+    });
+    app.push_sibling(theme_light);
+}
+
 // ───────────── main ─────────────
 
 fn main() -> io::Result<()> {
@@ -608,6 +680,7 @@ fn main() -> io::Result<()> {
     build_controls(&mut app);
     build_inputs(&mut app);
     build_misc(&mut app);
+    build_themes(&mut app);
 
     // фокус на инпуте: без фокуса символы уходят в root и никуда не печатаются
     app.focused = find_id(&app, "input_name").unwrap_or(0);

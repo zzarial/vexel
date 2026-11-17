@@ -1,5 +1,5 @@
 use std::time::Duration;
-use crossterm::event::{self, Event as CTEvent, KeyCode, KeyEventKind, MouseEventKind, MouseButton};
+use crossterm::event::{self, Event as CTEvent, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind, MouseButton};
 
 use crate::{AppState, Event};
 
@@ -13,7 +13,9 @@ pub fn read_event() -> Option<Event> {
         // --- клавиатура ---
         // kitty protocol шлёт Press/Repeat/Release: без фильтра символ вводится дважды
         CTEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Char(c) => Some(Event::Key(c)),
+            // Ctrl/Alt — не текст (Ctrl+C не должен печатать 'c').
+            // SHIFT не исключаем: с ним приходят заглавные буквы и символы
+            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => Some(Event::Key(c)),
             KeyCode::Enter => Some(Event::Enter),
             KeyCode::Tab => Some(Event::Tab),
             KeyCode::Esc => Some(Event::Escape),

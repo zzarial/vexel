@@ -1,11 +1,14 @@
 pub mod events;
 pub mod render;
 
+use std::collections::HashMap;
+
 pub struct AppState {
     pub elements: Vec<Element>,
     pub cursor: usize,
     pub focused: usize,
     pub prev: usize,
+    pub theme: Theme,
 }
 
 impl AppState {
@@ -26,6 +29,7 @@ impl AppState {
             cursor: root_index,
             focused: root_index,
             prev: root_index,
+            theme: Theme::default(),
         }
     }
 
@@ -69,7 +73,10 @@ impl AppState {
         if element.children.is_empty() {
             element.children = std::mem::take(&mut slot.children);
         }
-        self.cursor = idx;
+        // code не клонируется (Box<dyn Fn>): прислал элемент без колбэков — оставляем старые
+        if element.code.is_none() {
+            element.code = slot.code.take();
+        }
         *slot = element;
     }
     pub fn cursor_up(&mut self) {
@@ -255,14 +262,14 @@ pub struct Border {
     pub color: Color,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NamedColor {
     Black,
     Red,
@@ -282,7 +289,7 @@ pub enum NamedColor {
     BrightWhite,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Color {
     Rgb(Rgb),
     Named(NamedColor),
@@ -290,11 +297,61 @@ pub enum Color {
 
 impl Color {
     pub const WHITE: Color = Color::Named(NamedColor::White);
+    pub const BLACK: Color = Color::Named(NamedColor::Black);
 }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Position {
     Relative,
     Absolute,
+}
+
+// таблица цветовых оверрайдов. ключа нет -> дефолт
+pub type Palette = HashMap<NamedColor, Color>;
+
+pub struct Theme {
+    pub background: Color,       // фон всего приложения
+    pub palette: Palette,        // юзер переопределяет значения NamedColor
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            background: Color::BLACK,
+            palette: Palette::new(),
+        }
+    }
+}
+
+impl Theme {
+    //NamedColor: юзерская палитра -> сам NamedColor как Color
+    pub fn color(&self, c: NamedColor) -> Color {
+        *self.palette.get(&c).unwrap_or(&Color::Named(c))
+    }
+
+    // приглушённая версия цвета: blend с фоном 50/50
+    pub fn muted(&self, c: Color) -> Color {
+        blend(self.to_rgb(c, 128), self.to_rgb(self.background, 0))
+    }
+
+    // named проходит через палитру; палитра вернула named -> fallback-серый
+    fn to_rgb(&self, c: Color, fallback: u8) -> Rgb {
+        match c {
+            Color::Rgb(rgb) => rgb,
+            Color::Named(n) => match self.color(n) {
+                Color::Rgb(rgb) => rgb,
+                Color::Named(_) => Rgb { r: fallback, g: fallback, b: fallback },
+            },
+        }
+    }
+}
+
+// среднее двух цветов покомпонентно
+pub(crate) fn blend(a: Rgb, b: Rgb) -> Color {
+    Color::Rgb(Rgb {
+        r: ((a.r as u16 + b.r as u16) / 2) as u8,
+        g: ((a.g as u16 + b.g as u16) / 2) as u8,
+        b: ((a.b as u16 + b.b as u16) / 2) as u8,
+    })
 }
 
