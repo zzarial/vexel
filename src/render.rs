@@ -177,9 +177,9 @@ fn draw_text(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
 
     // height = 0 у текста трактуем как одну строку, иначе фон пропал бы совсем
     if let Some(bg) = bg {
-        let rows = el.style_height().max(1);
+        let rows = el.style.height.max(1);
         for row in 0..rows {
-            for col in 0..el.style_width() {
+            for col in 0..el.style.width {
                 buf.set(x.saturating_add(col), y.saturating_add(row), Cell { ch: ' ', fg, bg: Some(bg), bold, italic, underline });
             }
         }
@@ -191,7 +191,7 @@ fn draw_text(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
     let inset = content_inset(el);
     let tx = x.saturating_add(inset);
     let ty = y.saturating_add(inset);
-    let max_chars = el.style_width().saturating_sub(inset.saturating_mul(2)) as usize;
+    let max_chars = el.style.width.saturating_sub(inset.saturating_mul(2)) as usize;
     for (i, ch) in text.chars().take(max_chars).enumerate() {
         buf.set(tx.saturating_add(i as u16), ty, Cell { ch, fg, bg: Some(bg_fallback(el.style.background, theme)), bold, italic, underline });
     }
@@ -199,9 +199,9 @@ fn draw_text(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
 
 fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &Element, parent_x: u16, parent_y: u16) {
     let margin = el.style.margin;
-    let (x, y) = if el.style_position() == Position::Relative {
-        (parent_x.saturating_add(el.style_x()).saturating_add(margin),
-         parent_y.saturating_add(el.style_y()).saturating_add(margin))
+    let (x, y) = if el.style.position == Position::Relative {
+        (parent_x.saturating_add(el.style_x().saturating_add(margin)),
+         parent_y.saturating_add(el.style_y().saturating_add(margin)))
     } else {
         (el.style_x().saturating_add(margin), el.style_y().saturating_add(margin))
     };
@@ -210,9 +210,9 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
 
     // кэш координат элементов (rect)
     let idx = el.index;
-    let h = match &el.data {
-        ElementData::InputData { .. } => input_needed_height(el),
-        _ => el.style_height(),
+    let (w, h) = match &el.data {
+        ElementData::InputData { .. } => input_needed_size(el),
+        _ => (el.style.width, el.style.height),
     };
     if idx >= rects.len() {
         rects.resize(idx + 1, Rect { x: 0, y: 0, w: 0, h: 0, index: 0 });
@@ -220,7 +220,7 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
     rects[idx] = Rect {
         x,
         y,
-        w: el.style_width(),
+        w,
         h,
         index: el.index,
     };
@@ -255,7 +255,7 @@ fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
     let ElementData::ButtonData { label } = &el.data else { return };
     draw_box(buf, el, x, y, theme);
 
-    let (width, height) = (el.style_width(), el.style_height());
+    let (width, height) = (el.style.width, el.style.height);
     if width == 0 || height == 0 { return; }
 
     let inset = content_inset(el);
@@ -275,21 +275,20 @@ fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
 
 fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
     // input выше объявленной высоты, если текст не влез: рисуем box с реальной высотой
-    let height = input_needed_height(el);
-    draw_box_sized(buf, el, x, y, height, theme);
+    let (width, height) = input_needed_size(el);
+    // ширина тоже вычисленная: рамка должна расти вместе с текстом
+    draw_box_sized(buf, el, x, y, width, height, theme);
 
-    let width = el.style_width();
     // рамка занимает 1 колонку/строку с каждой стороны, padding тоже внутренняя территория
     let inset = content_inset(el);
     let (iw, ih) = (width.saturating_sub(inset.saturating_mul(2)), height.saturating_sub(inset.saturating_mul(2)));
     if iw == 0 || ih == 0 { return; }
 
-    if let ElementData::InputData { placeholder, value } = &el.data {
+    if let ElementData::InputData { placeholder, value, .. } = &el.data {
         // value непустой ? показываем value : показываем placeholder
-        // placeholder приглушённый цвет из темы, чтобы отличать от введённого
         let empty = value.is_empty();
         let text = if empty { placeholder } else { value };
-        let fg = if empty { theme.muted(el.style.color) } else { el.style.color };
+        let fg = if empty { Color::Named(NamedColor::Muted) } else { el.style.color };
         let bold = el.style.text_style.bold();
         let italic = el.style.text_style.italic();
         let underline = el.style.text_style.underline();
@@ -307,27 +306,44 @@ fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
     }
 }
 
-fn input_needed_height(el: &Element) -> u16 {
-    if let ElementData::InputData { placeholder, value } = &el.data {
+fn input_needed_size(el: &Element) -> (u16, u16) {
+    if let ElementData::InputData { placeholder, value, max_width, max_height, direction_expansion } = &el.data {
         let text = if value.is_empty() { placeholder } else { value };
-        let width = el.style_width();
-        let inset = content_inset(el);
+        let width = el.style.width;
+        let height = el.style.height;
+        let inset = content_inset(el);//border + padding
         let iw = width.saturating_sub(inset.saturating_mul(2));
-        if iw == 0 { return el.style_height(); } // строк нет, рисовать нечего - минимум
-        let lines = text.chars().count().div_ceil(iw as usize).max(1);
-        // высота = строки текста + inset сверху и снизу, но не меньше style.height
-        (lines as u16).saturating_add(inset.saturating_mul(2)).max(el.style_height())
+        match direction_expansion {
+            1 => {
+                let lines = text.chars().count().div_ceil(iw as usize).max(1);
+                // высота = строки текста + inset сверху и снизу, но не меньше style.height
+                (width, (lines as u16).saturating_add(inset.saturating_mul(2)).max(height))
+            },
+            2 => {
+                let chars = text.chars().count().max(1);
+                (((chars as u16).saturating_add(inset.saturating_mul(2))).min(*max_width as u16).max(width), height)
+            },
+            3 => {
+                let chars = text.chars().count().max(1);
+                // ширина сначала: по ней считается, сколько строк займёт текст
+                let w = ((chars as u16).saturating_add(inset.saturating_mul(2))).min(*max_width as u16).max(width);
+                let iw_new = w.saturating_sub(inset.saturating_mul(2)).max(1);
+                let lines = text.chars().count().div_ceil(iw_new as usize).max(1);
+                (w, ((lines as u16).saturating_add(inset.saturating_mul(2))).min(*max_height as u16).max(height))
+            },
+            // 0 и всё неизвестное: растём как объявлено
+            _ => (width, height),
+        }
     } else {
-        el.style_height()
+        (el.style.width, el.style.height)
     }
 }
 
 fn draw_box(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
-    draw_box_sized(buf, el, x, y, el.style_height(), theme);
+    draw_box_sized(buf, el, x, y, el.style.width, el.style.height, theme);
 }
 
-fn draw_box_sized(buf: &mut Buffer, el: &Element, x: u16, y: u16, height: u16, theme: &Theme) {
-    let (width, height) = (el.style_width(), height);
+fn draw_box_sized(buf: &mut Buffer, el: &Element, x: u16, y: u16, width: u16, height: u16, theme: &Theme) {
     if width == 0 || height == 0 { return; }
 
     // заливка фоном всей площади
@@ -402,6 +418,7 @@ fn to_ct(c: Color, theme: &Theme) -> CTColor {
             NamedColor::BrightMagenta => CTColor::Magenta,
             NamedColor::BrightCyan => CTColor::Cyan,
             NamedColor::BrightWhite => CTColor::White,
+            NamedColor::Muted => CTColor::Rgb { r: 0x4f, g: 0x5f, b: 0x76 },
         },
     }
 }

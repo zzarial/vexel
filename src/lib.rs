@@ -128,10 +128,13 @@ impl Element {
     pub fn button(id: &str, label: &str, style: Style) -> Self {
         Self::new(id, ElementData::ButtonData { label: label.to_string() }, style)
     }
-    pub fn input(id: &str, placeholder: &str, style: Style) -> Self {
+    pub fn input(id: &str, placeholder: &str, expansion: u8, style: Style) -> Self {
         Self::new(id, ElementData::InputData {
             placeholder: placeholder.to_string(),
             value: String::new(),
+            max_width: 10,
+            max_height: 4,
+            direction_expansion: expansion as i8,
         }, style)
     }
     pub fn style_x(&self) -> u16 {
@@ -139,15 +142,6 @@ impl Element {
     }
     pub fn style_y(&self) -> u16 {
         self.style.y.max(0) as u16
-    }
-    pub fn style_width(&self) -> u16 {
-        self.style.width
-    }
-    pub fn style_height(&self) -> u16 {
-        self.style.height
-    }
-    pub fn style_position(&self) -> Position {
-        self.style.position
     }
 }
 
@@ -192,6 +186,9 @@ pub enum ElementData {
     InputData {
         placeholder: String,
         value: String,
+        max_width: usize,
+        max_height: usize,
+        direction_expansion: i8, // 0 no expansion, 1 down, 2 rigth, 3 rigth + down
     },
 }
 
@@ -287,6 +284,7 @@ pub enum NamedColor {
     BrightMagenta,
     BrightCyan,
     BrightWhite,
+    Muted,//цвет placeholder
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -329,9 +327,9 @@ impl Theme {
         *self.palette.get(&c).unwrap_or(&Color::Named(c))
     }
 
-    // приглушённая версия цвета: blend с фоном 50/50
+    // приглушённая в2wерсия цвета
     pub fn muted(&self, c: Color) -> Color {
-        blend(self.to_rgb(c, 128), self.to_rgb(self.background, 0))
+        blend(self.to_rgb(c, 128), Rgb { r: 255, g: 255, b: 255 })
     }
 
     // named проходит через палитру; палитра вернула named -> fallback-серый

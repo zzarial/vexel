@@ -12,7 +12,7 @@ fn main() -> io::Result<()> {
     let mut stdout = io::stdout();
 
     let input_style = Style { x: 2, y: 1, width: 20, height: 3, ..Default::default() };
-    let mut input = Element::input("in", "пиши сюда", input_style);
+    let mut input = Element::input("in", "пиши сюда", 0, input_style);
     input.code = Some(ElementCode {
         on_key: Some(Box::new(|event, app: &mut AppState| {
             match event {
