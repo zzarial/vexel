@@ -21,7 +21,6 @@ impl AppState {
             children: Vec::new(),
             parent: 0,
             code: None,
-            dirty: false,
         };
         let root_index = root.index;
         Self {
@@ -36,7 +35,6 @@ impl AppState {
 
     pub fn push_child(&mut self, mut element: Element) {
         let idx = self.elements.len();
-        element.dirty = true;
         element.index = idx;
         element.parent = self.cursor;
         self.elements.push(element);
@@ -46,11 +44,10 @@ impl AppState {
     }
     pub fn push_sibling(&mut self, mut element: Element) {
         let idx = self.elements.len();
-        element.dirty = true;
         element.index = idx;
         let copy = self.cursor;
         self.cursor_up();
-        element.parent = self.cursor;// сосед = в того же родителя, что и текущий
+        element.parent = self.cursor;
         self.elements.push(element);
         self.elements[self.cursor].children.push(idx);
         self.prev = copy;
@@ -59,7 +56,7 @@ impl AppState {
     pub fn delete_element(&mut self, index: usize) {
         let Some(el) = self.elements.get_mut(index) else { return };
         el.style.visible = false;
-        // фокус не должен висеть на скрытом элементе, иначе клавиши уходят в пустоту
+        // фокус не должен висеть на скрытом элементе
         if self.focused == index {
             self.focused = el.parent;
         }
@@ -68,7 +65,6 @@ impl AppState {
         let idx = element.index;
         let Some(slot) = self.elements.get_mut(idx) else { return };
         // дерево не переносится обновлением: у свежего Element parent=0, children пусты.
-        // без этого дети отвязались бы от родителя, а элемент уехал в root
         element.parent = slot.parent;
         if element.children.is_empty() {
             element.children = std::mem::take(&mut slot.children);
@@ -102,7 +98,6 @@ pub struct Element {
     pub children: Vec<usize>,
     pub parent: usize,
     pub code: Option<ElementCode>,
-    pub dirty: bool,
 }
 
 impl Element {
@@ -115,7 +110,6 @@ impl Element {
             children: Vec::new(),
             parent: 0,
             code: None,
-            dirty: false,
         }
     }
   
@@ -154,7 +148,6 @@ pub fn clone_element(el: &Element) -> Element {
         children: el.children.clone(),
         parent: el.parent,
         code: None,
-        dirty: false,
     }
   }
 

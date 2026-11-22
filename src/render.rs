@@ -232,7 +232,6 @@ fn draw_element(buf: &mut Buffer, rects: &mut Vec<Rect>, app: &AppState, el: &El
         ElementData::InputData { .. } => draw_input(buf, el, x, y, &app.theme),
     }
 
-    // дети считаются от контента
     // inset = border + padding
     let inset = content_inset(el);//корды до рабочей зоны
     let (cx, cy) = (x.saturating_add(inset), y.saturating_add(inset));
@@ -274,12 +273,9 @@ fn draw_button(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
 }
 
 fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
-    // input выше объявленной высоты, если текст не влез: рисуем box с реальной высотой
     let (width, height) = input_needed_size(el);
-    // ширина тоже вычисленная: рамка должна расти вместе с текстом
     draw_box_sized(buf, el, x, y, width, height, theme);
 
-    // рамка занимает 1 колонку/строку с каждой стороны, padding тоже внутренняя территория
     let inset = content_inset(el);
     let (iw, ih) = (width.saturating_sub(inset.saturating_mul(2)), height.saturating_sub(inset.saturating_mul(2)));
     if iw == 0 || ih == 0 { return; }
@@ -296,7 +292,6 @@ fn draw_input(buf: &mut Buffer, el: &Element, x: u16, y: u16, theme: &Theme) {
         let line_len = iw as usize;
         let rows = ih as usize; // сколько строк влезает внутри
         let (tx, ty) = (x.saturating_add(inset), y.saturating_add(inset));
-        // без collect(): символ кладётся по счёту — колонка = позиция % ширине, строка = / ширине
         for (pos, ch) in text.chars().enumerate() {
             let row = pos / line_len;
             if row >= rows { break; }
@@ -317,7 +312,7 @@ fn input_needed_size(el: &Element) -> (u16, u16) {
             1 => {
                 let lines = text.chars().count().div_ceil(iw as usize).max(1);
                 // высота = строки текста + inset сверху и снизу, но не меньше style.height
-                (width, (lines as u16).saturating_add(inset.saturating_mul(2)).max(height))
+                (width, (lines as u16).saturating_add(inset.saturating_mul(2)).min(*max_height as u16).max(height))
             },
             2 => {
                 let chars = text.chars().count().max(1);
@@ -325,7 +320,6 @@ fn input_needed_size(el: &Element) -> (u16, u16) {
             },
             3 => {
                 let chars = text.chars().count().max(1);
-                // ширина сначала: по ней считается, сколько строк займёт текст
                 let w = ((chars as u16).saturating_add(inset.saturating_mul(2))).min(*max_width as u16).max(width);
                 let iw_new = w.saturating_sub(inset.saturating_mul(2)).max(1);
                 let lines = text.chars().count().div_ceil(iw_new as usize).max(1);
@@ -361,12 +355,10 @@ fn draw_box_sized(buf: &mut Buffer, el: &Element, x: u16, y: u16, width: u16, he
     };
     let border_cell = Cell { ch: ' ', fg: border.color, bg: Some(bg_fallback(el.style.background, theme)), ..Default::default() };
 
-    // saturating: x + width может выйти за u16, Buffer::set всё равно обрежет
     let right = x.saturating_add(width - 1);
     let bottom = y.saturating_add(height - 1);
 
     if width < 2 || height < 2 {
-        // рамка не влезает: однострочный box = сплошные ─, узкий = │
         if height == 1 {
             for i in 0..width {
                 buf.set(x.saturating_add(i), y, Cell { ch: '─', ..border_cell });

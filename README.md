@@ -1,71 +1,52 @@
 # Vexel
 
-TUI-библиотека на Rust, специализированная для **AI-агентов**. Фреймворк средней универсальности, узкий инструмент под одну задачу: интерфейс агента, который стримит ответ токен за токеном и не тормозит.
+TUI-библиотека на Rust под AI-агентов. Узкий инструмент, не универсальный фреймворк.
 
-## Архитектура
+## Сборка / запуск
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│  API (декларативный, Elm-like)                     [план]    │
-│  Model → update(msg) → view(model) → дерево элементов        │
-├──────────────────────────────────────────────────────────────┤
-│  Ядро (Core)                                       [готово]  │
-│  AppState — плоский Vec<Element>, курсорная навигация,       │
-│  дерево через children/parent                                │
-├──────────────────────────────────────────────────────────────┤
-│  Renderer                                          [готово]  │
-│  Обход дерева, расчёт координат, ANSI-вывод через crossterm. │
-│  Буфер в памяти + diff,                                      │
-│  в stdout уходит только изменённое                           │
-├──────────────────────────────────────────────────────────────┤
-│  Events                                            [в работе]│
-│  Чтение ввода, диспетчеризация (click, key, enter...)        │
-├──────────────────────────────────────────────────────────────┤
-│  Agent-виджеты                                     [план]    │
-│  Diff, Markdown, ToolCall, виртуальный скролл                │
-└──────────────────────────────────────────────────────────────┘
+```bash
+cargo check
+cargo run --example test   
 ```
 
-Рендер immediate-mode снизу: без retained-графа сцен и парсинга строк — быстрее Bubble Tea/Ink на стриминге.
+## Ядро
 
-## Состояние ядра
-
-Плоское дерево элементов: `Vec<Element>`, где связи — индексы (`children: Vec<usize>`, `parent: usize`), а не указатели. Кэш-дружелюбно, без `Rc<RefCell<...>>`.
+Плоское дерево: `Vec<Element>`, связи — индексы (`children: Vec<usize>`, `parent: usize`), root всегда 0.
 
 ```text
 AppState
-├── elements: Vec<Element>      // плоский массив (root всегда индекс 0)
-├── cursor: usize               // индекс элемента под курсором
-└── prev: usize                 // предыдущая позиция курсора
+├── elements: Vec<Element>
+├── cursor: usize          // куда упадёт следующий push_child
+├── focused: usize         // кому идут клавиши
+├── prev: usize            // для back_cursor
+└── theme: Theme           // фон + палитра оверрайдов NamedColor
 
 Element
 ├── id: String
-├── index: usize                // позиция в elements
-├── kind: ElementKind           // Box | Text | Button | Input
-├── data: ElementData           // текст, label, value...
-├── style: Option<Style>
-├── children: Vec<usize>        // индексы детей
-├── parent: usize               // индекс родителя
-├── code: Option<ElementCode>   // колбэки: on_click, on_key, on_render
-├── dirty: bool                 // нужно ли перерисовать (заготовка под diff)
-└── focusable: bool             // может ли получать фокус
+├── index: usize
+├── data: ElementData      // BoxData | TextData | ButtonData | InputData
+├── style: Style
+├── children: Vec<usize>
+├── parent: usize
+└── code: Option<ElementCode>  // on_click / on_key / on_render
 
 Style
-├── x: i16, y: i16              // смещение относительно родителя (Relative)
+├── x: i16, y: i16
 ├── width: u16, height: u16
-├── position: Position          // Relative (родитель + своё смещение) | Absolute (от экрана)
-├── color: Color                // Named | Rgb
-├── background: Option<Color>
-├── border: Option<Border>
+├── position: Position     // realetive/absolute
+├── color / background / border
+├── text_style: TextStyle  // bold/italic/underline
 ├── padding / margin
-└── visible: bool               // false — не рисуется, дети наследуют координаты
+└── visible: bool
 ```
 
-Позиционная модель: рекурсия рендера передаёт **вычисленные абсолютные координаты родителя**, каждый элемент добавляет своё смещение ровно один раз. `Absolute` позиционируется от экрана, игнорируя родителя.
 
-## Сборка
+## Renderer
 
-```bash
-cargo check   # проверка компиляции
-cargo build   # сборка
-```
+Двойная буферизация: кадр собирается в памяти (`Buffer`), diff против прошлого кадра, в stdout уезжают только изменённые ячейки. Попутно собираются `Rect` — по ним `hit_test` находит элемент под кликом (идёт с конца, последний нарисованный сверху).
+
+Input считается отдельно: `input_needed_size` возвращает реальный (w, h), его получают и rect, и рисование.
+
+## Events
+
+crossterm → `Event` (Click/Key/Enter/Tab/Escape/Up/Down/Backspace) → `dispatch`. Click идёт в элемент под курсором мыши (hit_test), остальное — в `app.focused`.
